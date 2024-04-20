@@ -114,10 +114,18 @@ class Model:
         self._P_tensor[0, J] = np.array([1-p, p])  # bluff with a Jack with prob p
         self._P_tensor[1, Q] = np.array([1-q, q])  # call with a Queen with prob q
 
+        self._V_tensor[0, J] = -1 + p*(1-3*q)/2
+        self._V_tensor[0, Q] = 0
+        self._V_tensor[0, K] = 1 - q/2
+
+        self._V_tensor[1, J] = -1
+        self._V_tensor[1, Q] = -1 + q*(3*p-1)/(1+p)
+        self._V_tensor[1, K] = +2
+
     def __call__(self, info_set: InfoSet) -> Tuple[Policy, Value]:
         if len(info_set.action_history) == 0:
             return (np.array([1.0, 0]), 0.0)
-        
+
         cp = info_set.get_current_player()
         card = info_set.cards[cp.value]
         assert card is not None
