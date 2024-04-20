@@ -60,7 +60,7 @@ class InfoSet:
 
         if len(self.action_history) < 2:
             return None
-        
+
         if tuple(self.action_history[-2:]) == (Action.PASS, Action.ADD_CHIP):
             return None
 
@@ -73,7 +73,7 @@ class InfoSet:
 
         loser = Player(1 - winner.value)
         loser_pot_contribution = self._get_pot_contribution(loser)
-        
+
         alice_winnings = loser_pot_contribution
         if winner == Player.BOB:
             alice_winnings *= -1
@@ -135,8 +135,9 @@ class Model:
 
         P = self._P_tensor[x][y]
         V = self._V_tensor[x][y]
+        print(f'  model({info_set}) -> P={P}, V={V}')
         return (P, V)
-    
+
         # if info_set.action_history[-1] == Action.ADD_CHIP:
         #     if card == Card.KING:
         #         return (np.array([0.0, 1.0]), 0.0)
@@ -151,7 +152,7 @@ class Model:
         #         return (np.array([1.0, 0.0]), 0.0)
         #     else:
         #         return (np.array([1 - self.p, self.p]), 0.0)
-    
+
     def bayes_prob(self, info_set: InfoSet) -> CardDistribution:
         cp = info_set.get_current_player().value
         H = np.ones(3)
@@ -202,7 +203,7 @@ class BaseNode:
 
     def getQ(self, default=None):
         return default if self.Q is None else self.Q
-    
+
 
 class ActionNode(BaseNode):
     def __init__(self, info_set: InfoSet):
@@ -211,7 +212,7 @@ class ActionNode(BaseNode):
         self.spawned_tree: Optional[ISMCTS] = None
 
     def __str__(self):
-        return f'Action({self.info_set}, N={self.N})'
+        return f'Action({self.info_set}, N={self.N}, Q={self.Q})'
 
     def expand_leaf(self, model: Model):
         self.N = 1
@@ -248,7 +249,7 @@ class HiddenStateSamplingNode(BaseNode):
         self.children_by_card: Dict[Card, ActionNode] = {}
 
     def __str__(self):
-        return f'Hidden({self.info_set}, N={self.N})'
+        return f'Hidden({self.info_set}, N={self.N}, Q={self.Q})'
 
     def sample(self, model: Model) -> ActionNode:
         card_distr = model.bayes_prob(self.info_set)
@@ -290,7 +291,7 @@ class ISMCTS:
 
         n_total = self.root.N - 1
         return {action: node.N / n_total for action, node in self.root.children_by_action.items()}
-    
+
     def choose_best_child(self, node: ActionNode, chosen_action: Optional[List[Action]]=None):
         actions = node.valid_actions
 
@@ -322,8 +323,8 @@ class ISMCTS:
             chosen_action.append(best_action)
         return node.children_by_action[best_action]
 
-    def visit(self, node: BaseNode, chosen_action: Optional[List[Action]]=None):
-        print(f'visit {id(self)} {node} {chosen_action}')
+    def visit(self, node: BaseNode, chosen_action: Optional[List[Action]]=None, indent=0):
+        print(f'{" "*indent}visit {id(self)} {node}')
         node.N += 1
         if node.is_terminal():
             return node.Q
@@ -335,7 +336,7 @@ class ISMCTS:
 
             if node.spawned_tree is not None:
                 chosen_action = []
-                node.spawned_tree.visit(node.spawned_tree.root, chosen_action=chosen_action)
+                node.spawned_tree.visit(node.spawned_tree.root, chosen_action=chosen_action, indent=indent+1)
                 if not chosen_action:
                     return node.Q
                 assert len(chosen_action) == 1
@@ -344,14 +345,15 @@ class ISMCTS:
             else:
                 child = self.choose_best_child(node, chosen_action=chosen_action)
 
-            leaf_Q = -self.visit(child)
+            leaf_Q = -self.visit(child, indent=indent+1)
             node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
             return leaf_Q
 
         assert isinstance(node, HiddenStateSamplingNode)
         child = node.sample(self.model)
-        leaf_Q = -self.visit(child)
+        leaf_Q = -self.visit(child, indent=indent+1)
         node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
+        print(f'{" "*indent}end visit {id(self)} {node}')
         return leaf_Q
 
 
