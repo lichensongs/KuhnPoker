@@ -304,7 +304,7 @@ class ISMCTS:
         Q_FPU = node.Q - c_FPU * np.sqrt(P_explored)
         Q = Q * (N > 0) + Q_FPU * (N < 1)
 
-        PUCT = Q + c_PUCT * P * np.sqrt(np.sum(N)) / (1 + N)
+        PUCT = Q + c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
         best_index = np.argmax(PUCT)
 
         print('  PUCT calc:')
