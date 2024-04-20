@@ -187,7 +187,7 @@ class BaseNode:
 
         if self.is_terminal():
             self.Q = self.game_outcome * (1 - 2 * self.current_player.value)
-            self.Q *= -1
+            # self.Q *= -1
 
     def is_terminal(self) -> bool:
         return self.game_outcome is not None
@@ -203,7 +203,7 @@ class ActionNode(BaseNode):
         self.spawned_tree: Optional[ISMCTS] = None
 
     def __str__(self):
-        return f'Action({self.info_set}, N={self.N})'
+        return f'Action({self.info_set}, {self.current_player} N={self.N}, Q={self.Q})'
 
     def expand_leaf(self, model: Model):
         self.N = 1
@@ -240,7 +240,7 @@ class HiddenStateSamplingNode(BaseNode):
         self.children_by_card: Dict[Card, ActionNode] = {}
 
     def __str__(self):
-        return f'Hidden({self.info_set}, N={self.N})'
+        return f'Hidden({self.info_set}, {self.current_player} N={self.N}, Q={self.Q})'
 
     def sample(self, model: Model) -> ActionNode:
         card_distr = model.bayes_prob(self.info_set)
@@ -277,6 +277,7 @@ class ISMCTS:
     def get_visit_distribution(self, n: int) -> Dict[Action, float]:
         while self.root.N <= n:
             self.visit(self.root)
+            print(f'end visit {id(self)}, {self.root.current_player} N: {self.root.N} Q:{self.root.Q}\n')
             if self.root.N == 1:
                 continue
 
@@ -342,7 +343,8 @@ class ISMCTS:
 
         assert isinstance(node, HiddenStateSamplingNode)
         child = node.sample(self.model)
-        leaf_Q = -self.visit(child)
+        # leaf_Q = -self.visit(child)
+        leaf_Q = self.visit(child)
         node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
         return leaf_Q
 
@@ -350,13 +352,20 @@ class ISMCTS:
 def main():
     nash_model = Model(1/3, 1/3)
 
+    # # Alice bet with Q after Bob bets
+    # history = [Action.PASS, Action.ADD_CHIP]
+    # info_set = InfoSet(history)
+    # info_set.cards[Player.ALICE.value] = Card.QUEEN
+
+    # Bob bets with J
     history = [Action.PASS]
     info_set = InfoSet(history)
     info_set.cards[Player.BOB.value] = Card.JACK
+
     node = ActionNode(info_set)
 
     ismcts = ISMCTS(nash_model, node)
-    distr = ismcts.get_visit_distribution(100)
+    distr = ismcts.get_visit_distribution(1000)
     print(distr)    
 
 

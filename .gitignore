@@ -2,3 +2,6 @@ images/
 papers/
 *.ipynb
 *.pdf
+.DS_Store
+.vscode/
+output.txt
