@@ -300,7 +300,11 @@ class ISMCTS:
 
         P_explored = np.sum(P * (N > 0))
 
-        Q = -np.array([node.children_by_action[a].getQ(default=0) for a in actions])
+        cp = node.info_set.get_current_player()
+        children = [node.children_by_action[a] for a in actions]
+        F = np.array([+1 if c.info_set.get_current_player() == cp else -1 for c in children])
+        Q = np.array([c.getQ(default=0) for c in children])
+        Q = Q * F
         Q_FPU = node.Q - c_FPU * np.sqrt(P_explored)
         Q = Q * (N > 0) + Q_FPU * (N < 1)
 
