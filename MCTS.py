@@ -6,7 +6,7 @@ from typing import Dict, List, Optional, Tuple
 
 EPSILON = 1e-6
 c_FPU = 0.2
-c_PUCT = 1.0
+c_PUCT = 50.0
 
 
 class Action(Enum):
@@ -235,15 +235,22 @@ class ActionNode(BaseNode):
 
 
 class HiddenStateSamplingNode(BaseNode):
-    def __init__(self, info_set: InfoSet):
+    def __init__(self, info_set: InfoSet, minVisit: int = 20):
         super().__init__(info_set)
         self.children_by_card: Dict[Card, ActionNode] = {}
+        self.minVisit = minVisit
 
     def __str__(self):
         return f'Hidden({self.info_set}, {self.current_player} N={self.N}, Q={self.Q})'
 
     def sample(self, model: Model) -> ActionNode:
         card_distr = model.bayes_prob(self.info_set)
+        # possible_card_ix = np.where(card_distr > 0)[0]
+        # possible_nodes = [self.children_by_card.get(Card(ix), None) for ix in possible_card_ix]
+        # isMinMet = np.array([n.isMinMet() if n else False for n in possible_nodes])
+        # if False in isMinMet:
+        #     card_distr[possible_card_ix] = 1
+        #     card_distr = card_distr/card_distr.sum()
         card = Card(np.random.choice(3, p=card_distr))
         node = self.children_by_card.get(card, None)
         if node is None:
@@ -261,6 +268,8 @@ class HiddenStateSamplingNode(BaseNode):
                 node.spawned_tree = ISMCTS(model, spawned_node)
         return node
 
+    def isMinMet(self) -> bool:
+        return self.N >= self.minVisit
     # def spawn(self, card: Card) -> 'ISMCTS':
     #     ismcts = self.children_by_card.get(card, None)
     #     if ismcts is None:
@@ -289,6 +298,9 @@ class ISMCTS:
 
         P = np.array([node.P[a.value] for a in actions])
         N = np.array([node.children_by_action[a].N for a in actions])
+        assert isinstance(list(node.children_by_action.values())[0], HiddenStateSamplingNode)
+        isMinMet = np.array([node.children_by_action[a].isMinMet() for a in actions])
+
 
         P_explored = np.sum(P * (N > 0))
 
@@ -297,6 +309,13 @@ class ISMCTS:
         Q = Q * (N > 0) + Q_FPU * (N < 1)
 
         PUCT = Q + c_PUCT * P * np.sqrt(np.sum(N)) / (1 + N)
+
+        isMinMet = np.array([node.children_by_action[a].isMinMet() for a in actions])
+        PUCT += (~isMinMet).astype(int)*1e5
+
+        if isMinMet[0]:
+            print('Pass is enough')
+
         best_index = np.argmax(PUCT)
 
         print('  PUCT calc:')
@@ -352,20 +371,20 @@ class ISMCTS:
 def main():
     nash_model = Model(1/3, 1/3)
 
-    # # Alice bet with Q after Bob bets
-    # history = [Action.PASS, Action.ADD_CHIP]
-    # info_set = InfoSet(history)
-    # info_set.cards[Player.ALICE.value] = Card.QUEEN
-
-    # Bob bets with J
-    history = [Action.PASS]
+    # Alice bet with Q after Bob bets
+    history = [Action.PASS, Action.ADD_CHIP]
     info_set = InfoSet(history)
-    info_set.cards[Player.BOB.value] = Card.JACK
+    info_set.cards[Player.ALICE.value] = Card.QUEEN
+
+    # # Bob bets with J
+    # history = [Action.PASS]
+    # info_set = InfoSet(history)
+    # info_set.cards[Player.BOB.value] = Card.JACK
 
     node = ActionNode(info_set)
 
     ismcts = ISMCTS(nash_model, node)
-    distr = ismcts.get_visit_distribution(1000)
+    distr = ismcts.get_visit_distribution(20000)
     print(distr)    
 
 
