@@ -25,8 +25,7 @@ class Card(Enum):
     KING = 2
 
 Policy = np.ndarray
-Value = float
-
+Value = np.ndarray
 CardDistribution = np.ndarray
 
 class InfoSet:
@@ -51,9 +50,9 @@ class InfoSet:
     def get_current_player(self) -> Player:
         return Player(len(self.action_history) % 2)
 
-    def get_game_outcome(self):
+    def get_game_outcome(self) -> Optional[Value]:
         """
-        None if game not terminal. Otherwise, return Alice's winnings.
+        None if game not terminal.
         """
         if None in self.cards:
             return None
@@ -74,10 +73,10 @@ class InfoSet:
         loser = Player(1 - winner.value)
         loser_pot_contribution = self._get_pot_contribution(loser)
 
-        alice_winnings = loser_pot_contribution
-        if winner == Player.BOB:
-            alice_winnings *= -1
-        return alice_winnings
+        outcome = np.zeros(2)
+        outcome[winner.value] = loser_pot_contribution
+        outcome[loser.value] = -loser_pot_contribution
+        return outcome
 
     def get_valid_actions(self) -> List[Action]:
         if len(self.action_history) == 0:
@@ -101,7 +100,7 @@ class Model:
         self.q = q
 
         self._P_tensor = np.zeros((2, 3, 2))
-        self._V_tensor = np.zeros((2, 3))
+        self._V_tensor = np.zeros((2, 3, 2))
 
         J = Card.JACK.value
         Q = Card.QUEEN.value
@@ -114,17 +113,19 @@ class Model:
         self._P_tensor[0, J] = np.array([1-p, p])  # bluff with a Jack with prob p
         self._P_tensor[1, Q] = np.array([1-q, q])  # call with a Queen with prob q
 
-        self._V_tensor[0, J] = -1 + p*(1-3*q)/2
-        self._V_tensor[0, Q] = 0
-        self._V_tensor[0, K] = 1 - q/2
+        self._V_tensor[0, J, 1] = -1 + p*(1-3*q)/2
+        self._V_tensor[0, Q, 1] = 0
+        self._V_tensor[0, K, 1] = 1 - q/2
+        self._V_tensor[0, :, 0] = -self._V_tensor[0, :, 1]
 
-        self._V_tensor[1, J] = -1
-        self._V_tensor[1, Q] = -1 + q*(3*p-1)/(1+p)
-        self._V_tensor[1, K] = +2
+        self._V_tensor[1, J, 0] = -1
+        self._V_tensor[1, Q, 0] = -1 + q*(3*p-1)/(1+p)
+        self._V_tensor[1, K, 0] = +2
+        self._V_tensor[1, :, 1] = -self._V_tensor[1, :, 0]
 
     def __call__(self, info_set: InfoSet) -> Tuple[Policy, Value]:
         if len(info_set.action_history) == 0:
-            return (np.array([1.0, 0]), 0.0)
+            return (np.array([1.0, 0]), self._V_tensor[0].sum(axis=0) / 3)
 
         cp = info_set.get_current_player()
         card = info_set.cards[cp.value]
@@ -138,21 +139,6 @@ class Model:
         print(f'  model({info_set}) -> P={P}, V={V}')
         return (P, V)
 
-        # if info_set.action_history[-1] == Action.ADD_CHIP:
-        #     if card == Card.KING:
-        #         return (np.array([0.0, 1.0]), 0.0)
-        #     elif card == Card.JACK:
-        #         return (np.array([1.0, 0.0]), 0.0)
-        #     else:
-        #         return (np.array([1 - self.q, self.q]), 0.0)
-        # else:
-        #     if card == Card.KING:
-        #         return (np.array([0.0, 1.0]), 0.0)
-        #     if card == Card.QUEEN:
-        #         return (np.array([1.0, 0.0]), 0.0)
-        #     else:
-        #         return (np.array([1 - self.p, self.p]), 0.0)
-
     def bayes_prob(self, info_set: InfoSet) -> CardDistribution:
         cp = info_set.get_current_player().value
         H = np.ones(3)
@@ -163,20 +149,12 @@ class Model:
             y = info_set.action_history[k+1].value
             H *= self._P_tensor[x, :, y]
 
-
-        # if len(info_set.action_history) < 2:
-        #     H = np.ones(3)
-        # else:
-        #     x = info_set.action_history[-2].value
-        #     y = info_set.action_history[-1].value
-
-        #     H = self._P_tensor[x, :, y]
-
         card = info_set.cards[1 - cp]
         assert card is not None
 
         H[card.value] = 0
         return H / sum(H)
+
 
 class BaseNode:
     def __init__(self, info_set: InfoSet):
@@ -191,18 +169,17 @@ class BaseNode:
 
         self.P = None
         self.V = None
-        self.Q = 0.0
+        self.Q = np.zeros(2)
         self.N = 0
 
         if self.is_terminal():
-            self.Q = self.game_outcome * (1 - 2 * self.current_player.value)
-            self.Q *= -1
+            self.Q = self.game_outcome.copy()
 
     def is_terminal(self) -> bool:
         return self.game_outcome is not None
 
-    def getQ(self, default=None):
-        return default if self.Q is None else self.Q
+    def getQ(self, cp: int, default=None):
+        return default if self.Q is None else self.Q[cp]
 
 
 class ActionNode(BaseNode):
@@ -270,13 +247,6 @@ class HiddenStateSamplingNode(BaseNode):
                 node.spawned_tree = ISMCTS(model, spawned_node)
         return node
 
-    # def spawn(self, card: Card) -> 'ISMCTS':
-    #     ismcts = self.children_by_card.get(card, None)
-    #     if ismcts is None:
-    #         ismcts = TODO
-    #         self.children_by_card[card] = ismcts
-    #     return ismcts
-
 
 class ISMCTS:
     def __init__(self, model: Model, root: BaseNode):
@@ -300,12 +270,10 @@ class ISMCTS:
 
         P_explored = np.sum(P * (N > 0))
 
-        cp = node.info_set.get_current_player()
+        cp = node.info_set.get_current_player().value
         children = [node.children_by_action[a] for a in actions]
-        F = np.array([+1 if c.info_set.get_current_player() == cp else -1 for c in children])
-        Q = np.array([c.getQ(default=0) for c in children])
-        Q = Q * F
-        Q_FPU = node.Q - c_FPU * np.sqrt(P_explored)
+        Q = np.array([c.getQ(cp, default=0) for c in children])
+        Q_FPU = node.Q[cp] - c_FPU * np.sqrt(P_explored)
         Q = Q * (N > 0) + Q_FPU * (N < 1)
 
         PUCT = Q + c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
@@ -331,11 +299,13 @@ class ISMCTS:
         print(f'{" "*indent}visit {id(self)} {node}')
         node.N += 1
         if node.is_terminal():
+            print(f'{" "*indent}end visit (terminal) {id(self)} {node}')
             return node.Q
 
         if isinstance(node, ActionNode):
             if node.N == 1:
                 node.expand_leaf(self.model)
+                print(f'{" "*indent}end visit (leaf) {id(self)} {node}')
                 return node.Q
 
             if node.spawned_tree is not None:
@@ -349,13 +319,14 @@ class ISMCTS:
             else:
                 child = self.choose_best_child(node, chosen_action=chosen_action)
 
-            leaf_Q = -self.visit(child, indent=indent+1)
+            leaf_Q = self.visit(child, indent=indent+1)
             node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
+            print(f'{" "*indent}end visit {id(self)} {node}')
             return leaf_Q
 
         assert isinstance(node, HiddenStateSamplingNode)
         child = node.sample(self.model)
-        leaf_Q = -self.visit(child, indent=indent+1)
+        leaf_Q = self.visit(child, indent=indent+1)
         node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
         print(f'{" "*indent}end visit {id(self)} {node}')
         return leaf_Q
@@ -370,8 +341,8 @@ def main():
     node = ActionNode(info_set)
 
     ismcts = ISMCTS(nash_model, node)
-    distr = ismcts.get_visit_distribution(100)
-    print(distr)    
+    distr = ismcts.get_visit_distribution(1000)
+    print(distr)
 
 
 if __name__ == '__main__':
