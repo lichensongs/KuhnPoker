@@ -6,6 +6,8 @@ from typing import Dict, List, Optional, Tuple
 
 np.set_printoptions(suppress=True)  # avoid scientific notation
 
+
+DEBUG = True
 EPSILON = 1e-6
 c_FPU = 0.2
 c_PUCT = 1.0
@@ -138,7 +140,8 @@ class Model:
 
         P = self._P_tensor[x][y]
         V = self._V_tensor[x][y]
-        print(f'  model({info_set}) -> P={P}, V={V}')
+        if DEBUG:
+            print(f'  model({info_set}) -> P={P}, V={V}')
         return (P, V)
 
     def bayes_prob(self, info_set: InfoSet) -> CardDistribution:
@@ -281,16 +284,17 @@ class ISMCTS:
         PUCT = Q + c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
         best_index = np.argmax(PUCT)
 
-        print('  PUCT calc:')
+        if DEBUG:
+            print('  PUCT calc:')
 
-        act = np.array([a.value for a in actions])
-        best_arr = np.zeros(len(P))
-        best_arr[best_index] = 1
-        full_arr = np.vstack([act, P, N, Q, PUCT, best_arr])
-        lines = str(full_arr).splitlines()
-        descrs = ['act', 'P', 'N', 'Q', 'PUCT', 'best']
-        for descr, line in zip(descrs, lines):
-            print('  %6s %s' % (descr, line))
+            act = np.array([a.value for a in actions])
+            best_arr = np.zeros(len(P))
+            best_arr[best_index] = 1
+            full_arr = np.vstack([act, P, N, Q, PUCT, best_arr])
+            lines = str(full_arr).splitlines()
+            descrs = ['act', 'P', 'N', 'Q', 'PUCT', 'best']
+            for descr, line in zip(descrs, lines):
+                print('  %6s %s' % (descr, line))
 
         best_action = actions[best_index]
         if chosen_action is not None:
@@ -298,16 +302,19 @@ class ISMCTS:
         return node.children_by_action[best_action]
 
     def visit(self, node: BaseNode, chosen_action: Optional[List[Action]]=None, indent=0):
-        print(f'{" "*indent}visit {id(self)} {node}')
+        if DEBUG:
+            print(f'{" "*indent}visit {id(self)} {node}')
         node.N += 1
         if node.is_terminal():
-            print(f'{" "*indent}end visit (terminal) {id(self)} {node}')
+            if DEBUG:
+                print(f'{" "*indent}end visit (terminal) {id(self)} {node}')
             return node.Q
 
         if isinstance(node, ActionNode):
             if node.N == 1:
                 node.expand_leaf(self.model)
-                print(f'{" "*indent}end visit (leaf) {id(self)} {node}')
+                if DEBUG:
+                    print(f'{" "*indent}end visit (leaf) {id(self)} {node}')
                 return node.Q
 
             if node.spawned_tree is not None:
@@ -323,14 +330,16 @@ class ISMCTS:
 
             leaf_Q = self.visit(child, indent=indent+1)
             node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
-            print(f'{" "*indent}end visit {id(self)} {node}')
+            if DEBUG:
+                print(f'{" "*indent}end visit {id(self)} {node}')
             return leaf_Q
 
         assert isinstance(node, HiddenStateSamplingNode)
         child = node.sample(self.model)
         leaf_Q = self.visit(child, indent=indent+1)
         node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
-        print(f'{" "*indent}end visit {id(self)} {node}')
+        if DEBUG:
+            print(f'{" "*indent}end visit {id(self)} {node}')
         return leaf_Q
 
 
