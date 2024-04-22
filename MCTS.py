@@ -4,6 +4,8 @@ from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 
+np.set_printoptions(suppress=True)  # avoid scientific notation
+
 EPSILON = 1e-6
 c_FPU = 0.2
 c_PUCT = 1.0
