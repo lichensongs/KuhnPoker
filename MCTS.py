@@ -199,16 +199,16 @@ class ActionNode(BaseNode):
     def expand_leaf(self, model: Model):
         self.N = 1
         assert self.game_outcome is None
-        self.expand_children()
+        self.expand_children(model)
         self.eval_model_and_normalize(model)
         self.Q = self.V
 
-    def expand_children(self):
+    def expand_children(self, model: Model):
         assert len(self.children_by_action) == 0
 
         for action in self.valid_actions:
             info_set = self.info_set.apply_move(action)
-            child = HiddenStateSamplingNode(info_set)
+            child = HiddenStateSamplingNode(model, info_set)
             assert action not in self.children_by_action
             self.children_by_action[action] = child
 
@@ -226,8 +226,9 @@ class ActionNode(BaseNode):
 
 
 class HiddenStateSamplingNode(BaseNode):
-    def __init__(self, info_set: InfoSet):
+    def __init__(self, model: Model, info_set: InfoSet):
         super().__init__(info_set)
+        self.card_distr = model.bayes_prob(self.info_set)
         self.children_by_card: Dict[Card, ActionNode] = {}
 
     def __str__(self):
@@ -236,6 +237,8 @@ class HiddenStateSamplingNode(BaseNode):
     def sample(self, model: Model) -> ActionNode:
         card_distr = model.bayes_prob(self.info_set)
         card = Card(np.random.choice(3, p=card_distr))
+        if DEBUG:
+            print(f'  sample {self.info_set} -> {card_distr} -> card={card}')
         node = self.children_by_card.get(card, None)
         if node is None:
             info_set = self.info_set.clone()
@@ -251,6 +254,11 @@ class HiddenStateSamplingNode(BaseNode):
                 spawned_node = ActionNode(info_set2)
                 node.spawned_tree = ISMCTS(model, spawned_node)
         return node
+
+    def recalcQ(self):
+        self.Q = np.zeros(2)
+        for card, child in self.children_by_card.items():
+            self.Q += child.Q * self.card_distr[card.value]
 
 
 class ISMCTS:
@@ -337,7 +345,7 @@ class ISMCTS:
         assert isinstance(node, HiddenStateSamplingNode)
         child = node.sample(self.model)
         leaf_Q = self.visit(child, indent=indent+1)
-        node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
+        node.recalcQ()
         if DEBUG:
             print(f'{" "*indent}end visit {id(self)} {node}')
         return leaf_Q
