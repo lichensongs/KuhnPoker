@@ -1,5 +1,4 @@
 import numpy as np
-
 from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
@@ -7,10 +6,10 @@ from typing import Dict, List, Optional, Tuple
 np.set_printoptions(suppress=True)  # avoid scientific notation
 
 
-DEBUG = True
+DEBUG = False
 EPSILON = 1e-6
 c_FPU = 0.2
-c_PUCT = 1.0
+c_PUCT = 4.0
 
 
 class Action(Enum):
@@ -33,7 +32,7 @@ Value = np.ndarray
 CardDistribution = np.ndarray
 
 class InfoSet:
-    def __init__(self, action_history: List[Action], cards=None):
+    def __init__(self, action_history: List[Action]=[], cards=None):
         self.action_history = action_history
         if cards is None:
             self.cards: List[Optional[Card]] = [None, None]  # indexed by player
@@ -97,7 +96,64 @@ class InfoSet:
         cards = list(self.cards)
         return InfoSet(action_history, cards)
 
+class ConstModel:
+    def __init__(self, p, q, h):
+        self.p = p
+        self.q = q
+        self.h = h
 
+        self._P_tensor = np.zeros((2, 3, 2))
+        self._V_tensor = np.zeros((2, 3, 2))
+
+        J = Card.JACK.value
+        Q = Card.QUEEN.value
+        K = Card.KING.value
+
+        self._P_tensor[:, K, 1] = 1  # always add chip with King
+        self._P_tensor[0, Q, 0] = 1  # never bet with a Queen
+        self._P_tensor[1, J, 0] = 1  # never call with a Jack
+
+        self._P_tensor[0, J] = np.array([1-p, p])  # bluff with a Jack with prob p
+        self._P_tensor[1, Q] = np.array([1-q, q])  # call with a Queen with prob q
+
+    def __call__(self, info_set: InfoSet) -> Tuple[Policy, Value]:
+        if len(info_set.action_history) == 0:
+            return (np.array([1.0, 0]), self._V_tensor[0].sum(axis=0) / 3)
+
+        cp = info_set.get_current_player()
+        card = info_set.cards[cp.value]
+        assert card is not None
+
+        x = info_set.action_history[-1].value
+        y = card.value
+
+        P = self._P_tensor[x][y]
+        V = self._V_tensor[x][y]
+        if DEBUG:
+            print(f'  model({info_set}) -> P={P}, V={V}')
+        return (P, V)
+
+    def bayes_prob(self, info_set: InfoSet) -> CardDistribution:
+        cp = info_set.get_current_player().value
+        
+        if (info_set.action_history[-1] == Action.ADD_CHIP) and (info_set.cards[1-cp] == Card.QUEEN):
+            H = np.array([1 - self.h, 0, self.h])
+            return H
+        
+        H = np.ones(3)
+        for k in range(len(info_set.action_history) - 1):
+            if k % 2 == cp:
+                continue
+            x = info_set.action_history[k].value
+            y = info_set.action_history[k+1].value
+            H *= self._P_tensor[x, :, y]
+
+        card = info_set.cards[1 - cp]
+        assert card is not None
+
+        H[card.value] = 0
+        return H / sum(H)
+    
 class Model:
     def __init__(self, p, q):
         self.p = p

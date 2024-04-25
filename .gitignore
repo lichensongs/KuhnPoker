@@ -1,4 +1,8 @@
 images/
 papers/
-*.ipynb
+training_data/
+.vscode/
+.ipynb_checkpoints
+**/__pycache__
 *.pdf
+*.txt
