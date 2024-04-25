@@ -28,26 +28,63 @@ class KuhnPoker:
     def run(self, n_gen=20):
         p_list = [self.model.p]
         q_list = [self.model.q]
+        h_list = [self.model.h]
+        
         for g in range(n_gen):
             self.run_generation(g)
-            p, q = self.update_model(g)
+            # p, q, h = self.update_model(g)
+            p, q, h = self.update_h(g)
             p_list.append(p)
             q_list.append(q)
+            h_list.append(h)
 
         df = pd.DataFrame({'p': p_list,
-                           'q': q_list})
+                           'q': q_list,
+                           'h': h_list})
         df.to_csv(f'{train_filepath}df-stats.csv', index=False)
 
     def update_model(self, gen, gamma=0.80):
         df = pd.read_csv(f'{train_filepath}df-{gen}.csv')
         p_old = self.model.p
         q_old = self.model.q
+        h_old = self.model.h
         p = df[(df['facing_action'] == 0) & (df['card'] == 0)]['prob'].mean()
         q = df[(df['facing_action'] == 1) & (df['card'] == 1)]['prob'].mean()
-        print(p, q)
-        self.model = Model(gamma*p_old + (1-gamma)*p, gamma*q_old + (1-gamma)*q)
-        return (p, q)
+        
+        update_p = gamma * p_old + (1 - gamma) * p
+        update_q = gamma * q_old + (1 - gamma) * q
+        
+        ix = (df['facing_action'] == 1) & (df['card'] == 1)
+        count = df[ix]['opponent_card'].count()
+        h = (df[ix]['opponent_card'].value_counts() / count).loc[2]
+        
+        # if not bayes:
+        #     update_h = gamma * h_old + (1 - gamma) * h
+        # else:
+        #     update_h = 1 / (1 + update_p)
+        
+        print(p, q, h)
+        self.model = ConstModel(update_p, update_q)
+        return (p, q, h)
+    
+    def update_h(self, gen, gamma=0.8):
+        df = pd.read_csv(f'{train_filepath}df-{gen}.csv')
+        p_old = self.model.p
+        q_old = self.model.q
+        h_old = self.model.h
+        p = df[(df['facing_action'] == 0) & (df['card'] == 0)]['prob'].mean()
+        q = df[(df['facing_action'] == 1) & (df['card'] == 1)]['prob'].mean()
 
+        
+        ix = (df['facing_action'] == 1) & (df['card'] == 1)
+        count = df[ix]['opponent_card'].count()
+        h = (df[ix]['opponent_card'].value_counts() / count).loc[2]
+        update_h = gamma * h_old + (1 - gamma) * h
+
+        print(p, q, h, update_h)
+        self.model = ConstModel(p_old, q_old, update_h)
+        return (p, q, h)
+    
     def run_generation(self, gen):
         model = self.model
         num_games = self.n_games_per_gen
@@ -57,7 +94,8 @@ class KuhnPoker:
         
         df_list = []
 
-        for i in tqdm(range(num_games)):
+        # for i in tqdm(range(num_games)):
+        for i in range(num_games):
             info_set = InfoSet([Action.PASS])
             deck  = list(Card)
             random.shuffle(deck)
@@ -105,6 +143,6 @@ class KuhnPoker:
 
 if __name__ == '__main__':
     model = ConstModel(1/3, 1/3, 0.75)
-    poker = KuhnPoker(model, n_games_per_gen=1000)
-    poker.run_generation(0)
-    # poker.run(n_gen=20)
+    poker = KuhnPoker(model, n_games_per_gen=128)
+    # poker.run_generation(0)
+    poker.run(n_gen=10)

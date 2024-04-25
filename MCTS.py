@@ -97,7 +97,7 @@ class InfoSet:
         return InfoSet(action_history, cards)
 
 class ConstModel:
-    def __init__(self, p, q, h):
+    def __init__(self, p, q, h=None):
         self.p = p
         self.q = q
         self.h = h
@@ -135,10 +135,10 @@ class ConstModel:
 
     def bayes_prob(self, info_set: InfoSet) -> CardDistribution:
         cp = info_set.get_current_player().value
-        
-        if (info_set.action_history[-1] == Action.ADD_CHIP) and (info_set.cards[1-cp] == Card.QUEEN):
-            H = np.array([1 - self.h, 0, self.h])
-            return H
+        if self.h is not None:
+            if (info_set.action_history[-1] == Action.ADD_CHIP) and (info_set.cards[1-cp] == Card.QUEEN):
+                H = np.array([1 - self.h, 0, self.h])
+                return H
         
         H = np.ones(3)
         for k in range(len(info_set.action_history) - 1):
