@@ -156,6 +156,7 @@ class ISMCTS:
 
         Q_range = [c.Q_range for c in children]
 
+        # eps-condition
         if not any([item is None for item in Q_range]):
             is_overlap = intervals_overlap(Q_range[0][:, 0], Q_range[1][:, 0])
             if is_overlap:
