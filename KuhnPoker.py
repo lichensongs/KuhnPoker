@@ -58,31 +58,37 @@ class KuhnPoker:
         count = df[ix]['opponent_card'].count()
         h = (df[ix]['opponent_card'].value_counts() / count).loc[2]
         
-        # if not bayes:
-        #     update_h = gamma * h_old + (1 - gamma) * h
-        # else:
-        #     update_h = 1 / (1 + update_p)
-        
         print(p, q, h)
         self.model = ConstModel(update_p, update_q)
         return (p, q, h)
     
-    def update_h(self, gen, gamma=0.8):
+    def update_h(self, gen, gamma=0.90):
         df = pd.read_csv(f'{train_filepath}df-{gen}.csv')
-        p_old = self.model.p
-        q_old = self.model.q
-        h_old = self.model.h
-        p = df[(df['facing_action'] == 0) & (df['card'] == 0)]['prob'].mean()
-        q = df[(df['facing_action'] == 1) & (df['card'] == 1)]['prob'].mean()
-
+        p = self.model.p
+        q = self.model.q
+        h = self.model.h
+        eps = self.model.eps
+        
+        p_freq = df[(df['facing_action'] == 0) & (df['card'] == 0)]['prob'].mean()
+        q_freq = df[(df['facing_action'] == 1) & (df['card'] == 1)]['prob'].mean()
         
         ix = (df['facing_action'] == 1) & (df['card'] == 1)
         count = df[ix]['opponent_card'].count()
-        h = (df[ix]['opponent_card'].value_counts() / count).loc[2]
-        update_h = gamma * h_old + (1 - gamma) * h
+        h_freq = (df[ix]['opponent_card'].value_counts() / count).loc[2]
 
-        print(p, q, h, update_h)
-        self.model = ConstModel(p_old, q_old, update_h)
+        if h_freq > h - eps and h_freq < h + eps:
+            std = np.sqrt(h * (1 - h) / count)
+            update_p = gamma * p + (1 - gamma) * p_freq
+            update_q = gamma * q + (1 - gamma) * q_freq
+            self.model = ConstModel(update_p, update_q, h = h, eps = std*2)
+            print(f'model: {p:.3f}, {q:.3f}, {h:.3f}, {eps:.3f}, \nfreq: {p_freq:.3f}, {q_freq:.3f}, {h_freq:.4f}, \nupdate: {update_p:.3f}, {update_q:.3f}, {h:.3f}, {std:.3f}')
+            return (p_freq, q_freq, h_freq)
+
+        update_h = gamma * h + (1 - gamma) * h_freq
+
+        std = np.sqrt(update_h * (1 - update_h) / count)
+        self.model = ConstModel(p, q, h=update_h, eps=std*2)
+        print(f'model: {p:.3f}, {q:.3f}, {h:.3f}, {eps:.3f}, \nfreq: {p_freq:.3f}, {q_freq:.3f}, {h_freq:.4f}, \nupdate: {p:.3f}, {q:.3f}, {update_h:.3f}, {std:.3f}')
         return (p, q, h)
     
     def run_generation(self, gen):
@@ -142,7 +148,7 @@ class KuhnPoker:
 
 
 if __name__ == '__main__':
-    model = ConstModel(1/3, 1/3, h=0.75, eps=0.10)
-    poker = KuhnPoker(model, n_games_per_gen=128)
+    model = ConstModel(1/3, 1.1/3, h=0.75, eps=0.30)
+    poker = KuhnPoker(model, n_games_per_gen=32)
     # poker.run_generation(0)
     poker.run(n_gen=10)
