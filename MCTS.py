@@ -1,5 +1,8 @@
+from helper_functions import perturb_probs, find_midpoint_overlap, intervals_overlap
+from InfoSet import Card, Action, InfoSet, Value, Player
+from Model import ConstModel, Model
+
 import numpy as np
-from enum import Enum
 from typing import Dict, List, Optional, Tuple
 
 
@@ -10,223 +13,6 @@ DEBUG = False
 EPSILON = 1e-6
 c_FPU = 0.2
 c_PUCT = 4.0
-
-
-class Action(Enum):
-    PASS = 0
-    ADD_CHIP = 1
-
-
-class Player(Enum):
-    ALICE = 0
-    BOB = 1
-
-
-class Card(Enum):
-    JACK = 0
-    QUEEN = 1
-    KING = 2
-
-Policy = np.ndarray
-Value = np.ndarray
-CardDistribution = np.ndarray
-
-class InfoSet:
-    def __init__(self, action_history: List[Action]=[], cards=None):
-        self.action_history = action_history
-        if cards is None:
-            self.cards: List[Optional[Card]] = [None, None]  # indexed by player
-        else:
-            self.cards = cards
-
-    def __str__(self):
-        hist_str = ''.join(map(str, [a.value for a in self.action_history]))
-        card_str = ''.join(['?' if c is None else c.name[0] for c in self.cards])
-        return f'history=[{hist_str}], cards={card_str}'
-
-    def __repr__(self):
-        return str(self)
-
-    def clone(self) -> 'InfoSet':
-        return InfoSet(list(self.action_history), list(self.cards))
-
-    def get_current_player(self) -> Player:
-        return Player(len(self.action_history) % 2)
-
-    def get_game_outcome(self) -> Optional[Value]:
-        """
-        None if game not terminal.
-        """
-        if None in self.cards:
-            return None
-
-        if len(self.action_history) < 2:
-            return None
-
-        if tuple(self.action_history[-2:]) == (Action.PASS, Action.ADD_CHIP):
-            return None
-
-        if tuple(self.action_history[-2:]) == (Action.ADD_CHIP, Action.PASS):
-            winner = self.get_current_player()
-        elif self.cards[Player.ALICE.value].value > self.cards[Player.BOB.value].value:
-            winner = Player.ALICE
-        else:
-            winner = Player.BOB
-
-        loser = Player(1 - winner.value)
-        loser_pot_contribution = self._get_pot_contribution(loser)
-
-        outcome = np.zeros(2)
-        outcome[winner.value] = loser_pot_contribution
-        outcome[loser.value] = -loser_pot_contribution
-        return outcome
-
-    def get_valid_actions(self) -> List[Action]:
-        if len(self.action_history) == 0:
-            # Force check for now to simplify game
-            return [Action.PASS]
-        return [Action.PASS, Action.ADD_CHIP]
-
-    def _get_pot_contribution(self, player: Player):
-        action_values = [a.value for i, a in enumerate(self.action_history) if i % 2 == player.value]
-        return 1 + sum(action_values)
-
-    def apply_move(self, action: Action) -> 'InfoSet':
-        action_history = self.action_history + [action]
-        cards = list(self.cards)
-        return InfoSet(action_history, cards)
-
-class ConstModel:
-    def __init__(self, p, q, h=None, eps=0):
-        self.p = p
-        self.q = q
-        self.h = h
-        self.eps = eps
-
-        self._P_tensor = np.zeros((2, 3, 2))
-        self._V_tensor = np.zeros((2, 3, 2))
-
-        J = Card.JACK.value
-        Q = Card.QUEEN.value
-        K = Card.KING.value
-
-        self._P_tensor[:, K, 1] = 1  # always add chip with King
-        self._P_tensor[0, Q, 0] = 1  # never bet with a Queen
-        self._P_tensor[1, J, 0] = 1  # never call with a Jack
-
-        self._P_tensor[0, J] = np.array([1-p, p])  # bluff with a Jack with prob p
-        self._P_tensor[1, Q] = np.array([1-q, q])  # call with a Queen with prob q
-
-        self._V_tensor[0, J, 1] = -1 + p*(1-3*q)/2
-        self._V_tensor[0, Q, 1] = 0
-        self._V_tensor[0, K, 1] = 1 - q/2
-        self._V_tensor[0, :, 0] = -self._V_tensor[0, :, 1]
-
-        self._V_tensor[1, J, 0] = -1
-        self._V_tensor[1, Q, 0] = -1 + q*(3*p-1)/(1+p)
-        self._V_tensor[1, K, 0] = +2
-        self._V_tensor[1, :, 1] = -self._V_tensor[1, :, 0]
-
-    def __call__(self, info_set: InfoSet) -> Tuple[Policy, Value]:
-        if len(info_set.action_history) == 0:
-            return (np.array([1.0, 0]), self._V_tensor[0].sum(axis=0) / 3)
-
-        cp = info_set.get_current_player()
-        card = info_set.cards[cp.value]
-        assert card is not None
-
-        x = info_set.action_history[-1].value
-        y = card.value
-
-        P = self._P_tensor[x][y]
-        V = self._V_tensor[x][y]
-        if DEBUG:
-            print(f'  model({info_set}) -> P={P}, V={V}')
-        return (P, V)
-
-    def bayes_prob(self, info_set: InfoSet) -> CardDistribution:
-        cp = info_set.get_current_player().value
-        if self.h is not None:
-            if (info_set.action_history[-1] == Action.ADD_CHIP) and (info_set.cards[1-cp] == Card.QUEEN):
-                H = np.array([1 - self.h, 0, self.h])
-                return (H, self.eps)
-        
-        H = np.ones(3)
-        for k in range(len(info_set.action_history) - 1):
-            if k % 2 == cp:
-                continue
-            x = info_set.action_history[k].value
-            y = info_set.action_history[k+1].value
-            H *= self._P_tensor[x, :, y]
-
-        card = info_set.cards[1 - cp]
-        assert card is not None
-
-        H[card.value] = 0
-        return (H / sum(H), 0.0)
-    
-class Model:
-    def __init__(self, p, q):
-        self.p = p
-        self.q = q
-
-        self._P_tensor = np.zeros((2, 3, 2))
-        self._V_tensor = np.zeros((2, 3, 2))
-
-        J = Card.JACK.value
-        Q = Card.QUEEN.value
-        K = Card.KING.value
-
-        self._P_tensor[:, K, 1] = 1  # always add chip with King
-        self._P_tensor[0, Q, 0] = 1  # never bet with a Queen
-        self._P_tensor[1, J, 0] = 1  # never call with a Jack
-
-        self._P_tensor[0, J] = np.array([1-p, p])  # bluff with a Jack with prob p
-        self._P_tensor[1, Q] = np.array([1-q, q])  # call with a Queen with prob q
-
-        self._V_tensor[0, J, 1] = -1 + p*(1-3*q)/2
-        self._V_tensor[0, Q, 1] = 0
-        self._V_tensor[0, K, 1] = 1 - q/2
-        self._V_tensor[0, :, 0] = -self._V_tensor[0, :, 1]
-
-        self._V_tensor[1, J, 0] = -1
-        self._V_tensor[1, Q, 0] = -1 + q*(3*p-1)/(1+p)
-        self._V_tensor[1, K, 0] = +2
-        self._V_tensor[1, :, 1] = -self._V_tensor[1, :, 0]
-
-    def __call__(self, info_set: InfoSet) -> Tuple[Policy, Value]:
-        if len(info_set.action_history) == 0:
-            return (np.array([1.0, 0]), self._V_tensor[0].sum(axis=0) / 3)
-
-        cp = info_set.get_current_player()
-        card = info_set.cards[cp.value]
-        assert card is not None
-
-        x = info_set.action_history[-1].value
-        y = card.value
-
-        P = self._P_tensor[x][y]
-        V = self._V_tensor[x][y]
-        if DEBUG:
-            print(f'  model({info_set}) -> P={P}, V={V}')
-        return (P, V)
-
-    def bayes_prob(self, info_set: InfoSet) -> CardDistribution:
-        cp = info_set.get_current_player().value
-        H = np.ones(3)
-        for k in range(len(info_set.action_history) - 1):
-            if k % 2 == cp:
-                continue
-            x = info_set.action_history[k].value
-            y = info_set.action_history[k+1].value
-            H *= self._P_tensor[x, :, y]
-
-        card = info_set.cards[1 - cp]
-        assert card is not None
-
-        H[card.value] = 0
-        return H / sum(H)
-
 
 class BaseNode:
     def __init__(self, info_set: InfoSet):
@@ -304,33 +90,17 @@ class HiddenStateSamplingNode(BaseNode):
         return f'Hidden({self.info_set}, N={self.N}, Q={self.Q})'
 
     def sample(self, model: Model) -> ActionNode:
-        card_distr = model.bayes_prob(self.info_set)
+        card_distr, eps = model.bayes_prob(self.info_set)
         card = Card(np.random.choice(3, p=card_distr))
         if DEBUG:
             print(f'  sample {self.info_set} -> {card_distr} -> card={card}')
         node = self.children_by_card.get(card, None)
-        if node is None:
-            info_set = self.info_set.clone()
-            cp = info_set.get_current_player().value
-            info_set.cards[cp] = card
-            assert None not in info_set.cards
-            node = ActionNode(info_set)
-            self.children_by_card[card] = node
-
-            if not node.is_terminal():
-                info_set2 = info_set.clone()
-                info_set2.cards[1-cp] = None
-                spawned_node = ActionNode(info_set2)
-                node.spawned_tree = ISMCTS(model, spawned_node)
         return node
     
     def create_children(self):
         model = self.model
         card_dist, eps = model.bayes_prob(self.info_set)
         cp = self.info_set.get_current_player().value
-
-        # if cp == 1 and self.info_set.cards[1 - cp] == Card.QUEEN:
-        #     print('found it')
 
         for c in Card:
             if card_dist[c.value] > 0:
@@ -357,35 +127,6 @@ class HiddenStateSamplingNode(BaseNode):
             Q_upper += child.Q * upper[card.value]
         self.Q_range = np.stack([Q_lower, Q_upper], axis=0)
 
-# Function to perturb the probabilities
-def perturb_probs(probs, uncertainty):
-    indices = np.where((probs > 0) & (probs < 1))[0]  # Indices of modifiable probabilities
-    
-    # Creating perturbed versions
-    if len(indices) > 1:  # Ensure there are at least two modifiable probabilities
-        lower = probs.copy()
-        upper = probs.copy()
-
-        # Decrease first modifiable prob and increase second
-        lower[indices[0]] = max(0, lower[indices[0]] - uncertainty)
-        lower[indices[1]] = min(1, lower[indices[1]] + uncertainty)
-
-        # Increase first modifiable prob and decrease second
-        upper[indices[0]] = min(1, upper[indices[0]] + uncertainty)
-        upper[indices[1]] = max(0, upper[indices[1]] - uncertainty)
-
-        return lower, upper
-    else:
-        return probs, probs  # Return unchanged if not enough elements to modify
-
-def intervals_overlap(interval1, interval2):
-    # Sort the intervals to ensure the lower bound is first
-    interval1 = np.sort(interval1)
-    interval2 = np.sort(interval2)
-    
-    # Check for overlap
-    return interval1[0] <= interval2[1] and interval2[0] <= interval1[1]
-
 class ISMCTS:
     def __init__(self, model: Model, root: BaseNode):
         self.model = model
@@ -401,6 +142,7 @@ class ISMCTS:
         return {action: node.N / n_total for action, node in self.root.children_by_action.items()}
 
     def choose_best_child(self, node: ActionNode, chosen_action: Optional[List[Action]]=None):
+
         actions = node.valid_actions
 
         P = np.array([node.P[a.value] for a in actions])
@@ -412,17 +154,19 @@ class ISMCTS:
         children = [node.children_by_action[a] for a in actions]
         Q = np.array([c.getQ(cp, default=0) for c in children])
 
-        # Q_range = [c.Q_range for c in children]
+        Q_range = [c.Q_range for c in children]
 
-        # if not any([item is None for item in Q_range]):
-        #     is_overlap = intervals_overlap(Q_range[0][:, 0], Q_range[1][:, 0])
-        #     if is_overlap:
-        #         policy_prior, _ = self.model(node.info_set)
-        #         # sample_action = np.random.choice(actions, p=policy_prior)
-        #         PUCT = c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
-        #         best_index = np.argmax(PUCT)
-        #         best_action = actions[best_index]
-        #         return node.children_by_action[best_action]
+        if not any([item is None for item in Q_range]):
+            is_overlap = intervals_overlap(Q_range[0][:, 0], Q_range[1][:, 0])
+            if is_overlap:
+                mid = find_midpoint_overlap(Q_range[0][:, 0], Q_range[1][:, 0])
+                PUCT = mid + c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
+                best_index = np.argmax(PUCT)
+                best_action = actions[best_index]
+
+                if chosen_action is not None:
+                    chosen_action.append(best_action)
+                return node.children_by_action[best_action]
 
         Q_FPU = node.Q[cp] - c_FPU * np.sqrt(P_explored)
         Q = Q * (N > 0) + Q_FPU * (N < 1)
@@ -481,16 +225,17 @@ class ISMCTS:
             return leaf_Q
 
         assert isinstance(node, HiddenStateSamplingNode)
-        # child = node.sample(self.model)
+        
         if not node.children_by_card:
             node.create_children()
+        child = node.sample(self.model)
 
-        # leaf_Q = self.visit(child, indent=indent+1)
+        leaf_Q = self.visit(child, indent=indent+1)
         node.recalcQ()
         if DEBUG:
             print(f'{" "*indent}end visit {id(self)} {node}')
-        return node.Q
-        # return leaf_Q
+
+        return leaf_Q
 
 
 def main():
