@@ -142,7 +142,7 @@ class KuhnPoker:
 
 
 if __name__ == '__main__':
-    model = ConstModel(1/3, 1/3, 0.75)
+    model = ConstModel(1/3, 1/3, h=0.75, eps=0.10)
     poker = KuhnPoker(model, n_games_per_gen=128)
     # poker.run_generation(0)
     poker.run(n_gen=10)
