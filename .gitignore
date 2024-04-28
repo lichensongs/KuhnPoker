@@ -6,3 +6,4 @@ training_data/
 **/__pycache__
 *.pdf
 *.txt
+.DS_Store
