@@ -143,7 +143,7 @@ class HiddenStateSamplingNode(BaseNode):
             Q_upper += child.Q * upper[card.value]
         self.Q_range = np.stack([Q_lower, Q_upper], axis=0)
         if DEBUG:
-            print(f'{" "*indent}Q: {self.Q}, Q_lower: {Q_lower}, Q_upper: {Q_upper}')
+            print(f'{" "*indent} recalcQ --> Q: {self.Q}, Q_lower: {Q_lower}, Q_upper: {Q_upper}')
 
 class ISMCTS:
     def __init__(self, model: Model, root: BaseNode):
@@ -158,7 +158,7 @@ class ISMCTS:
             if self.root.N == 1:
                 continue
 
-        n_total = self.root.N - 1
+        n_total = self.root.N
         return {action: node.N / n_total for action, node in self.root.children_by_action.items()}
 
     def choose_best_child(self, node: ActionNode, chosen_action: Optional[List[Action]]=None):
@@ -173,7 +173,6 @@ class ISMCTS:
         cp = node.info_set.get_current_player().value
         children = [node.children_by_action[a] for a in actions]
         Q = np.array([c.getQ(cp, default=0) for c in children])
-
         Q_range = [c.Q_range for c in children]
 
         PUCT_factor = c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
@@ -181,7 +180,13 @@ class ISMCTS:
         # eps-condition
         if not any([item is None for item in Q_range]):
             # assert False, 'TODO: use cp to decide the side of Q_range'
-            is_overlap = intervals_overlap(Q_range[0][:, cp] + PUCT_factor[0], Q_range[1][:, cp] + PUCT_factor[1])
+            Q_int1 = Q_range[0][:, cp]
+            Q_int2 = Q_range[1][:, cp]
+            is_overlap = intervals_overlap(Q_int1 + PUCT_factor[0], Q_int2 + PUCT_factor[1])
+            
+            if DEBUG:
+                print(f'--PUCT overlap: {is_overlap} Q1: {Q_int1}, Q2: {Q_int2}, PUCT1: {PUCT_factor[0]}, PUCT2: {PUCT_factor[1]}')
+                
             if is_overlap:
                 PUCT = c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
                 best_index = np.argmax(PUCT)
@@ -240,7 +245,7 @@ class ISMCTS:
                 child = node.children_by_action[action]
 
                 if DEBUG:
-                    print(f'{" "*indent}spawned tree action: {action}')
+                    print(f'{"*"*indent}spawned tree action: {action}')
 
             else:
                 child = self.choose_best_child(node, chosen_action=chosen_action)
@@ -281,7 +286,7 @@ def main():
     node = ActionNode(info_set, model)
 
     ismcts = ISMCTS(model, node)
-    distr = ismcts.get_visit_distribution(100)
+    distr = ismcts.get_visit_distribution(200)
     print(distr)
 
 
