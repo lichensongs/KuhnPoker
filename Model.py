@@ -28,15 +28,15 @@ class ConstModel:
         self._P_tensor[0, J] = np.array([1-p, p])  # bluff with a Jack with prob p
         self._P_tensor[1, Q] = np.array([1-q, q])  # call with a Queen with prob q
 
-        # self._V_tensor[0, J, 1] = -1 + p*(1-3*q)/2
-        # self._V_tensor[0, Q, 1] = 0
-        # self._V_tensor[0, K, 1] = 1 - q/2
-        # self._V_tensor[0, :, 0] = -self._V_tensor[0, :, 1]
+        self._V_tensor[0, J, 1] = -1 + p*(1-3*q)/2
+        self._V_tensor[0, Q, 1] = 0
+        self._V_tensor[0, K, 1] = 1 - q/2
+        self._V_tensor[0, :, 0] = -self._V_tensor[0, :, 1]
 
-        # self._V_tensor[1, J, 0] = -1
-        # self._V_tensor[1, Q, 0] = -1 + q*(3*p-1)/(1+p)
-        # self._V_tensor[1, K, 0] = +2
-        # self._V_tensor[1, :, 1] = -self._V_tensor[1, :, 0]
+        self._V_tensor[1, J, 0] = -1
+        self._V_tensor[1, Q, 0] = -1 + q*(3*p-1)/(1+p)
+        self._V_tensor[1, K, 0] = +2
+        self._V_tensor[1, :, 1] = -self._V_tensor[1, :, 0]
 
     def __call__(self, info_set: InfoSet) -> Tuple[Policy, Value]:
         if len(info_set.action_history) == 0:
@@ -50,7 +50,11 @@ class ConstModel:
         y = card.value
 
         P = self._P_tensor[x][y]
-        V = self._V_tensor[x][y]
+        if info_set.action_history == [Action.PASS, Action.ADD_CHIP] and info_set.cards == [Card.QUEEN, Card.JACK]:
+            V = np.zeros(2)
+        else:
+            V = self._V_tensor[x][y]
+            
         if DEBUG:
             print(f'  model({info_set}) -> P={P}, V={V}')
         return (P, V)
