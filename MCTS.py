@@ -9,10 +9,10 @@ from typing import Dict, List, Optional, Tuple
 np.set_printoptions(suppress=True)  # avoid scientific notation
 
 
-DEBUG = False
+DEBUG = True
 EPSILON = 1e-6
 c_FPU = 0.2
-c_PUCT = 4.0
+c_PUCT = 4
 
 class BaseNode:
     def __init__(self, info_set: InfoSet):
@@ -41,15 +41,21 @@ class BaseNode:
 
 
 class ActionNode(BaseNode):
-    def __init__(self, info_set: InfoSet):
+    def __init__(self, info_set: InfoSet, model):
         super().__init__(info_set)
         self.children_by_action: Dict[Action, BaseNode] = {}
         self.spawned_tree: Optional[ISMCTS] = None
+        self.model = model
+        
+        if not self.is_terminal():
+            self.eval_model_and_normalize(self.model)
+            self.Q = self.V
 
     def __str__(self):
-        return f'Action({self.info_set}, N={self.N}, Q={self.Q})'
+        return f'Action({self.info_set}, N={self.N}, Q={self.Q}), V={self.V}'
 
-    def expand_leaf(self, model: Model):
+    def expand_leaf(self):
+        model = self.model
         self.N = 1
         assert self.game_outcome is None
         self.expand_children(model)
@@ -66,7 +72,7 @@ class ActionNode(BaseNode):
             self.children_by_action[action] = child
 
     def eval_model_and_normalize(self, model: Model):
-        assert self.P is None
+        # assert self.P is None
         self.P, self.V = model(self.info_set)
         self.P *= self.valid_action_mask
 
@@ -97,7 +103,10 @@ class HiddenStateSamplingNode(BaseNode):
         node = self.children_by_card.get(card, None)
         return node
     
-    def create_children(self):
+    def create_children(self, indent=0):
+        if DEBUG:
+            print(f'{" "*indent}create children for hidden node: {self}')
+
         model = self.model
         card_dist, eps = model.bayes_prob(self.info_set)
         cp = self.info_set.get_current_player().value
@@ -106,26 +115,35 @@ class HiddenStateSamplingNode(BaseNode):
             if card_dist[c.value] > 0:
                 info_set = self.info_set.clone()
                 info_set.cards[cp] = c
-                node = ActionNode(info_set)
+                node = ActionNode(info_set, self.model)
                 self.children_by_card[c] = node
+
+                if DEBUG:
+                    print(f'{" "*indent}created child: {node}')
 
                 if not node.is_terminal():
                     info_set2 = info_set.clone()
                     info_set2.cards[1 - cp] = None
-                    spawned_node = ActionNode(info_set2)
+                    spawned_node = ActionNode(info_set2, self.model)
                     node.spawned_tree = ISMCTS(model, spawned_node)
+                    if DEBUG:
+                        print(f'{" "*indent}created spawned tree at: {spawned_node}')
 
-    def recalcQ(self):
+    def recalcQ(self, indent=0):
         card_dist, eps = self.model.bayes_prob(self.info_set)
         lower, upper = perturb_probs(card_dist, eps)
         self.Q = np.zeros(2)
         Q_lower = np.zeros(2)
         Q_upper = np.zeros(2)
         for card, child in self.children_by_card.items():
+            if DEBUG:
+                print(f'{" "*indent}child: {child}, Q: {child.Q}, V: {child.V}')
             self.Q += child.Q * card_dist[card.value]
             Q_lower += child.Q * lower[card.value]
             Q_upper += child.Q * upper[card.value]
         self.Q_range = np.stack([Q_lower, Q_upper], axis=0)
+        if DEBUG:
+            print(f'{" "*indent}Q: {self.Q}, Q_lower: {Q_lower}, Q_upper: {Q_upper}')
 
 class ISMCTS:
     def __init__(self, model: Model, root: BaseNode):
@@ -134,6 +152,8 @@ class ISMCTS:
 
     def get_visit_distribution(self, n: int) -> Dict[Action, float]:
         while self.root.N <= n:
+            if DEBUG:
+                print(f'------------------- # visit: {self.root.N}   ---------------------')
             self.visit(self.root)
             if self.root.N == 1:
                 continue
@@ -156,12 +176,14 @@ class ISMCTS:
 
         Q_range = [c.Q_range for c in children]
 
+        PUCT_factor = c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
+
         # eps-condition
         if not any([item is None for item in Q_range]):
-            is_overlap = intervals_overlap(Q_range[0][:, 0], Q_range[1][:, 0])
+            # assert False, 'TODO: use cp to decide the side of Q_range'
+            is_overlap = intervals_overlap(Q_range[0][:, cp] + PUCT_factor[0], Q_range[1][:, cp] + PUCT_factor[1])
             if is_overlap:
-                mid = find_midpoint_overlap(Q_range[0][:, 0], Q_range[1][:, 0])
-                PUCT = mid + c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
+                PUCT = c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
                 best_index = np.argmax(PUCT)
                 best_action = actions[best_index]
 
@@ -203,10 +225,10 @@ class ISMCTS:
 
         if isinstance(node, ActionNode):
             if node.N == 1:
-                node.expand_leaf(self.model)
+                node.expand_leaf()
                 if DEBUG:
-                    print(f'{" "*indent}end visit (leaf) {id(self)} {node}')
-                return node.Q
+                    print(f'{" "*indent}expanded leaves {id(self)} {node}')
+                # return node.Q
 
             if node.spawned_tree is not None:
                 chosen_action = []
@@ -216,23 +238,27 @@ class ISMCTS:
                 assert len(chosen_action) == 1
                 action = chosen_action[0]
                 child = node.children_by_action[action]
+
+                if DEBUG:
+                    print(f'{" "*indent}spawned tree action: {action}')
+
             else:
                 child = self.choose_best_child(node, chosen_action=chosen_action)
 
             leaf_Q = self.visit(child, indent=indent+1)
             node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
             if DEBUG:
-                print(f'{" "*indent}end visit {id(self)} {node}')
+                print(f'{" "*indent}end visit {id(self)} {node}, return leaf_Q: {leaf_Q}')
             return leaf_Q
 
         assert isinstance(node, HiddenStateSamplingNode)
         
         if not node.children_by_card:
-            node.create_children()
+            node.create_children(indent=indent)
         child = node.sample(self.model)
 
         leaf_Q = self.visit(child, indent=indent+1)
-        node.recalcQ()
+        node.recalcQ(indent)
         if DEBUG:
             print(f'{" "*indent}end visit {id(self)} {node}')
 
@@ -252,10 +278,10 @@ def main():
     history = [Action.PASS]
     info_set = InfoSet(history)
     info_set.cards[Player.BOB.value] = Card.JACK
-    node = ActionNode(info_set)
+    node = ActionNode(info_set, model)
 
     ismcts = ISMCTS(model, node)
-    distr = ismcts.get_visit_distribution(1000)
+    distr = ismcts.get_visit_distribution(100)
     print(distr)
 
 
