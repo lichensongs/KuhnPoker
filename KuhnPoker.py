@@ -76,20 +76,27 @@ class KuhnPoker:
         count = df[ix]['opponent_card'].count()
         h_freq = (df[ix]['opponent_card'].value_counts() / count).loc[2]
 
-        if h_freq > h - eps and h_freq < h + eps:
-            std = np.sqrt(h * (1 - h) / count)
-            update_p = gamma * p + (1 - gamma) * p_freq
-            update_q = gamma * q + (1 - gamma) * q_freq
-            self.model = ConstModel(update_p, update_q, h = h, eps = std*2)
-            print(f'model: {p:.3f}, {q:.3f}, {h:.3f}, {eps:.3f}, \nfreq: {p_freq:.3f}, {q_freq:.3f}, {h_freq:.4f}, \nupdate: {update_p:.3f}, {update_q:.3f}, {h:.3f}, {std:.3f}')
-            return (p_freq, q_freq, h_freq)
+        # if h_freq > h - eps and h_freq < h + eps:
+        #     std = np.sqrt(h * (1 - h) / count)
+        #     update_p = gamma * p + (1 - gamma) * p_freq
+        #     update_q = gamma * q + (1 - gamma) * q_freq
+        #     self.model = ConstModel(update_p, update_q, h = h, eps = std)
+        #     print(f'model: {p:.3f}, {q:.3f}, {h:.3f}, {eps:.3f}, \nfreq: {p_freq:.3f}, {q_freq:.3f}, {h_freq:.4f}, \nupdate: {update_p:.3f}, {update_q:.3f}, {h:.3f}, {std:.3f}')
+        #     return (p_freq, q_freq, h)
+        
+        update_p = gamma * p + (1 - gamma) * p_freq
+        update_q = gamma * q + (1 - gamma) * q_freq
 
         update_h = gamma * h + (1 - gamma) * h_freq
+        # if h_freq > h + eps or h_freq < h - eps:
+        #     update_h = gamma * h + (1 - gamma) * h_freq
+        # else:
+        #     update_h = h
 
         std = np.sqrt(update_h * (1 - update_h) / count)
-        self.model = ConstModel(p, q, h=update_h, eps=std*2)
+        self.model = ConstModel(update_p, update_q, h=update_h, eps=std)
         print(f'model: {p:.3f}, {q:.3f}, {h:.3f}, {eps:.3f}, \nfreq: {p_freq:.3f}, {q_freq:.3f}, {h_freq:.4f}, \nupdate: {p:.3f}, {q:.3f}, {update_h:.3f}, {std:.3f}')
-        return (p, q, h)
+        return (p_freq, q_freq, h)
     
     def run_generation(self, gen):
         model = self.model
@@ -148,7 +155,7 @@ class KuhnPoker:
 
 
 if __name__ == '__main__':
-    model = ConstModel(1/3, 1.1/3, h=0.75, eps=0.30)
-    poker = KuhnPoker(model, n_games_per_gen=32)
+    model = ConstModel(0.5, 0.5, h=0.75, eps=0.25)
+    poker = KuhnPoker(model, n_games_per_gen=64)
     # poker.run_generation(0)
-    poker.run(n_gen=10)
+    poker.run(n_gen=100)
