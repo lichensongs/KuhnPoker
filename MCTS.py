@@ -9,7 +9,7 @@ from typing import Dict, List, Optional, Tuple
 np.set_printoptions(suppress=True)  # avoid scientific notation
 
 
-DEBUG = True
+DEBUG = False
 EPSILON = 1e-6
 c_FPU = 0.2
 c_PUCT = 4
@@ -188,18 +188,22 @@ class ISMCTS:
                 print(f'--PUCT overlap: {is_overlap} Q1: {Q_int1}, Q2: {Q_int2}, PUCT1: {PUCT_factor[0]}, PUCT2: {PUCT_factor[1]}')
                 
             if is_overlap:
-                PUCT = c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
-                best_index = np.argmax(PUCT)
-                best_action = actions[best_index]
+                # PUCT = c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
+                # best_index = np.argmax(PUCT)
+                # best_action = actions[best_index]
 
+                # if chosen_action is not None:
+                #     chosen_action.append(best_action)
+                # return node.children_by_action[best_action]
+                
                 if chosen_action is not None:
-                    chosen_action.append(best_action)
-                return node.children_by_action[best_action]
+                    chosen_action.append(None)
+                    return np.sum(P * Q)
 
         Q_FPU = node.Q[cp] - c_FPU * np.sqrt(P_explored)
         Q = Q * (N > 0) + Q_FPU * (N < 1)
 
-        PUCT = Q + c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
+        PUCT = Q + c_PUCT * P * np.sqrt(np.sum(N)+1) / np.maximum(0.5, N)
         best_index = np.argmax(PUCT)
 
         if DEBUG:
@@ -237,11 +241,20 @@ class ISMCTS:
 
             if node.spawned_tree is not None:
                 chosen_action = []
-                node.spawned_tree.visit(node.spawned_tree.root, chosen_action=chosen_action, indent=indent+1)
+                # node.spawned_tree.visit(node.spawned_tree.root, chosen_action=chosen_action, indent=indent+1)
+
+                leaf_Q = node.spawned_tree.visit(node.spawned_tree.root, chosen_action=chosen_action, indent=indent+1)
+
                 if not chosen_action:
                     return node.Q
                 assert len(chosen_action) == 1
                 action = chosen_action[0]
+
+                if action == None:
+                    if DEBUG:
+                        print('mixed strategy')
+                    return leaf_Q
+
                 child = node.children_by_action[action]
 
                 if DEBUG:
@@ -249,6 +262,8 @@ class ISMCTS:
 
             else:
                 child = self.choose_best_child(node, chosen_action=chosen_action)
+                if not isinstance(child, HiddenStateSamplingNode):
+                    return child # as leaf_Q
 
             leaf_Q = self.visit(child, indent=indent+1)
             node.Q = (node.Q * (node.N - 1) + leaf_Q) / node.N
@@ -286,7 +301,7 @@ def main():
     node = ActionNode(info_set, model)
 
     ismcts = ISMCTS(model, node)
-    distr = ismcts.get_visit_distribution(200)
+    distr = ismcts.get_visit_distribution(99)
     print(distr)
 
 
