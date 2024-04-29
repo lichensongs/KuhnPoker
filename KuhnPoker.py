@@ -18,14 +18,15 @@ train_filepath = 'training_data/'
 
 
 class KuhnPoker:
-    def __init__(self, model, n_games_per_gen=64, n_mcts_iters=1000):
+    def __init__(self, model, n_games_per_gen=64, n_mcts_iters=100, fixed_eps=False):
         self.n_games_per_gen = n_games_per_gen
         self.n_mcts_iters = n_mcts_iters
+        self.fixed_eps = fixed_eps
 
         self.model = model
         self.opt = None  
 
-    def run(self, n_gen=20):
+    def run(self, gamma=0.9, n_gen=20, batch_size=1000):
         p_list = [self.model.p]
         q_list = [self.model.q]
         h_list = [self.model.h]
@@ -33,7 +34,7 @@ class KuhnPoker:
         for g in range(n_gen):
             self.run_generation(g)
             # p, q, h = self.update_model(g)
-            p, q, h = self.update_h(g)
+            p, q, h = self.update_h(g, gamma=gamma, batch_size=batch_size)
             p_list.append(p)
             q_list.append(q)
             h_list.append(h)
@@ -62,8 +63,10 @@ class KuhnPoker:
         self.model = ConstModel(update_p, update_q)
         return (p, q, h)
     
-    def update_h(self, gen, gamma=0.90):
+    def update_h(self, gen, gamma=0.90, batch_size=1000):
+
         df = pd.read_csv(f'{train_filepath}df-{gen}.csv')
+                
         p = self.model.p
         q = self.model.q
         h = self.model.h
@@ -71,32 +74,31 @@ class KuhnPoker:
         
         p_freq = df[(df['facing_action'] == 0) & (df['card'] == 0)]['prob'].mean()
         q_freq = df[(df['facing_action'] == 1) & (df['card'] == 1)]['prob'].mean()
+
+        # dfs = []
+        # for i in range(gen+1):
+        #     df = pd.read_csv(f'training_data/df-{i}.csv')
+        #     dfs.append(df)
+
+        # df = pd.concat(dfs, axis=0)
+        # df = df[-batch_size:]
         
         ix = (df['facing_action'] == 1) & (df['card'] == 1)
         count = df[ix]['opponent_card'].count()
         h_freq = (df[ix]['opponent_card'].value_counts() / count).loc[2]
 
-        # if h_freq > h - eps and h_freq < h + eps:
-        #     std = np.sqrt(h * (1 - h) / count)
-        #     update_p = gamma * p + (1 - gamma) * p_freq
-        #     update_q = gamma * q + (1 - gamma) * q_freq
-        #     self.model = ConstModel(update_p, update_q, h = h, eps = std)
-        #     print(f'model: {p:.3f}, {q:.3f}, {h:.3f}, {eps:.3f}, \nfreq: {p_freq:.3f}, {q_freq:.3f}, {h_freq:.4f}, \nupdate: {update_p:.3f}, {update_q:.3f}, {h:.3f}, {std:.3f}')
-        #     return (p_freq, q_freq, h)
-        
         update_p = gamma * p + (1 - gamma) * p_freq
         update_q = gamma * q + (1 - gamma) * q_freq
-
         update_h = gamma * h + (1 - gamma) * h_freq
-        # if h_freq > h + eps or h_freq < h - eps:
-        #     update_h = gamma * h + (1 - gamma) * h_freq
-        # else:
-        #     update_h = h
 
-        std = np.sqrt(update_h * (1 - update_h) / count)
+        if self.fixed_eps:
+            std = eps
+        else:
+            std = np.sqrt(update_h * (1 - update_h) / count)
+
         self.model = ConstModel(update_p, update_q, h=update_h, eps=std)
         print(f'model: {p:.3f}, {q:.3f}, {h:.3f}, {eps:.3f}, \nfreq: {p_freq:.3f}, {q_freq:.3f}, {h_freq:.4f}, \nupdate: {p:.3f}, {q:.3f}, {update_h:.3f}, {std:.3f}')
-        return (p_freq, q_freq, h)
+        return (update_p, update_q, update_h)
     
     def run_generation(self, gen):
         model = self.model
@@ -120,7 +122,7 @@ class KuhnPoker:
                 info_set = info_set.clone()
                 info_set.cards = [None, None]
                 info_set.cards[cp.value] = cards[cp.value]
-                node = ActionNode(info_set)
+                node = ActionNode(info_set, model)
 
                 mcts = ISMCTS(model, node)
                 dist = mcts.get_visit_distribution(num_iters)
@@ -155,7 +157,7 @@ class KuhnPoker:
 
 
 if __name__ == '__main__':
-    model = ConstModel(0.5, 0.5, h=0.75, eps=0.25)
-    poker = KuhnPoker(model, n_games_per_gen=64)
+    model = ConstModel(0.99, 0.99, h=0.75, eps=0.05)
+    poker = KuhnPoker(model, n_games_per_gen=512, n_mcts_iters=100, fixed_eps=True)
     # poker.run_generation(0)
-    poker.run(n_gen=100)
+    poker.run(n_gen=1024, gamma=0.9)
