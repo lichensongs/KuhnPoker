@@ -100,6 +100,9 @@ class KuhnPoker:
         print(f'model: {p:.3f}, {q:.3f}, {h:.3f}, {eps:.3f}, \nfreq: {p_freq:.3f}, {q_freq:.3f}, {h_freq:.4f}, \nupdate: {p:.3f}, {q:.3f}, {update_h:.3f}, {std:.3f}')
         return (update_p, update_q, update_h)
     
+    def train(self, gen: int, training_data_path='training_data/', model_path='temp/', num_batches=256, batch_size=64):
+        pass
+
     def run_generation(self, gen):
         model = self.model
         num_games = self.n_games_per_gen
@@ -126,7 +129,7 @@ class KuhnPoker:
 
                 mcts = ISMCTS(model, node)
                 dist = mcts.get_visit_distribution(num_iters)
-                data.append(((info_set.action_history[-1].value, cards[cp.value].value, cards[1 - cp.value].value), dist[Action.ADD_CHIP]))
+                data.append(((info_set.action_history[-1].value, cards[cp.value].value, cards[1 - cp.value].value, cp.value), dist[Action.ADD_CHIP]))
 
                 actions, probs = zip(*list(dist.items()))
                 move = np.random.choice(actions, p=probs)
@@ -139,20 +142,27 @@ class KuhnPoker:
                     continue
                 break
             
-            facing_action = [info[0] for info, p in data]
-            holding_card = [info[1] for info, p in data]
-            opp_card = [info[2] for info, p in data]
-            probs = [p for info, p in data]
+            facing_action = [info[0] for info, p in data] # facing action
+            holding_card = [info[1] for info, p in data] # own card
+            opp_card = [info[2] for info, p in data] # opponent card
+            probs = [p for info, p in data] # action probability
+            current_player = [info[3] for info, p in data]
 
             df = pd.DataFrame({'facing_action': facing_action,
                                'card': holding_card,
                                'opponent_card': opp_card,
+                               'current_player': current_player,
                                'prob': probs})
 
             df['game#'] = i
+            df['outcome'] = df['current_player'].apply(lambda x: outcome[x])
+            df['input_p'] = self.model.p
+            df['input_q'] = self.model.q
+            df['input_h'] = self.model.h
             df_list.append(df)
 
-        df = pd.concat(df_list, axis=0, ignore_index=True) 
+        df = pd.concat(df_list, axis=0, ignore_index=True)
+        df['gen'] = gen
         df.to_csv(f'{train_filepath}df-{gen}.csv', index=False)
 
 

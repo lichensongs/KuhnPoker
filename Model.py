@@ -2,10 +2,32 @@ from InfoSet import Card, InfoSet, Value, Action
 
 from typing import Tuple
 import numpy as np
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
 
 DEBUG = False
 Policy = np.ndarray
 CardDistribution = np.ndarray
+
+class ModelH(nn.Module):
+    def __init__(self):
+        super().__init__()
+
+        self.fc1 = nn.Linear(1, 16)
+        self.relu = F.relu
+        self.fc2 = nn.Linear(16, 1)
+        self.sigmoid = nn.Sigmoid()
+
+    def forward(self, x: torch.Tensor):
+
+        x = self.fc1(x)  # (N, 16)
+        x = self.relu(x)  # (N, 16)
+        x = self.fc2(x)  # (N, 1)
+        p = self.sigmoid(x) # (N, 1)
+       
+        return p
+
 
 class ConstModel:
     def __init__(self, p, q, h=None, eps=0):
