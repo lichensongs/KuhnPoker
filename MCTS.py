@@ -1,9 +1,10 @@
 from helper_functions import perturb_probs, find_midpoint_overlap, intervals_overlap
 from InfoSet import Card, Action, InfoSet, Value, Player
-from Model import ConstModel, Model
+from Model import ConstModel, Model, ModelH
 
 import numpy as np
 from typing import Dict, List, Optional, Tuple
+import torch
 
 
 np.set_printoptions(suppress=True)  # avoid scientific notation
@@ -179,7 +180,6 @@ class ISMCTS:
 
         # eps-condition
         if not any([item is None for item in Q_range]):
-            # assert False, 'TODO: use cp to decide the side of Q_range'
             Q_int1 = Q_range[0][:, cp]
             Q_int2 = Q_range[1][:, cp]
             is_overlap = intervals_overlap(Q_int1 + PUCT_factor[0], Q_int2 + PUCT_factor[1])
@@ -187,18 +187,9 @@ class ISMCTS:
             if DEBUG:
                 print(f'--PUCT overlap: {is_overlap} Q1: {Q_int1}, Q2: {Q_int2}, PUCT1: {PUCT_factor[0]}, PUCT2: {PUCT_factor[1]}')
                 
-            if is_overlap:
-                # PUCT = c_PUCT * P * np.sqrt(np.sum(N)) / np.maximum(0.5, N)
-                # best_index = np.argmax(PUCT)
-                # best_action = actions[best_index]
-
-                # if chosen_action is not None:
-                #     chosen_action.append(best_action)
-                # return node.children_by_action[best_action]
-                
-                if chosen_action is not None:
-                    chosen_action.append(None)
-                    return np.sum(P * Q)
+            if is_overlap and chosen_action is not None:                
+                chosen_action.append(None)
+                return np.sum(P * Q)
 
         Q_FPU = node.Q[cp] - c_FPU * np.sqrt(P_explored)
         Q = Q * (N > 0) + Q_FPU * (N < 1)
@@ -237,12 +228,10 @@ class ISMCTS:
                 node.expand_leaf()
                 if DEBUG:
                     print(f'{" "*indent}expanded leaves {id(self)} {node}')
-                # return node.Q
+                return node.Q
 
             if node.spawned_tree is not None:
                 chosen_action = []
-                # node.spawned_tree.visit(node.spawned_tree.root, chosen_action=chosen_action, indent=indent+1)
-
                 leaf_Q = node.spawned_tree.visit(node.spawned_tree.root, chosen_action=chosen_action, indent=indent+1)
 
                 if not chosen_action:
@@ -284,26 +273,37 @@ class ISMCTS:
 
         return leaf_Q
 
+def get_start_info_set(player: str):
+    if player == 'bob':
+        history = [Action.PASS]
+        info_set = InfoSet(history)
+        info_set.cards[Player.BOB.value] = Card.JACK
 
-def main():
-    # nash_model = Model(1/3, 1/3)
-    model = ConstModel(1/3, 1/3, h=0.75, eps=0.05)
+    elif player == 'alice':
+        history = [Action.PASS, Action.ADD_CHIP]
+        info_set = InfoSet(history)
+        info_set.cards[Player.ALICE.value] = Card.QUEEN
+    
+    else:
+        raise ValueError('player must be either "bob" or "alice"')
+    
+    return info_set
 
-    # history = [Action.PASS, Action.ADD_CHIP]
-    # info_set = InfoSet(history)
-    # info_set.cards[Player.ALICE.value] = Card.QUEEN
-    # node = ActionNode(info_set)
-
-
-    history = [Action.PASS]
-    info_set = InfoSet(history)
-    info_set.cards[Player.BOB.value] = Card.JACK
+def test_model(player: str, model, iter=128):
+    info_set = get_start_info_set(player)
     node = ActionNode(info_set, model)
-
     ismcts = ISMCTS(model, node)
-    distr = ismcts.get_visit_distribution(99)
+    distr = ismcts.get_visit_distribution(128)
     print(distr)
 
+def main():
+    model = Model(2/3, 1/3)
+    # model = ConstModel(1/3, 1/3, h=0.75, eps=0.05)
+
+    # h_model = torch.load('model_hmodel/model-1.pt')
+    # model = ModelH(0.15, 0.99, h_model=h_model, eps=0.05)
+
+    test_model('alice', model, iter=128)
 
 if __name__ == '__main__':
     main()

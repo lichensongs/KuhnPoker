@@ -8,3 +8,6 @@ training_data/
 *.txt
 .DS_Store
 training_data1
+training_data_hmodel
+model_hmodel
+temp

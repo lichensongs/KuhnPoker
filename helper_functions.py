@@ -1,10 +1,10 @@
 import numpy as np
 
 def perturb_probs(probs, uncertainty):
-    indices = np.where((probs > 0) & (probs < 1))[0]  # Indices of modifiable probabilities
+    indices = np.where((probs > 0) & (probs < 1))[0]
     
-    # Creating perturbed versions
-    if len(indices) > 1:  # Ensure there are at least two modifiable probabilities
+
+    if len(indices) > 1:
         lower = probs.copy()
         upper = probs.copy()
 
@@ -18,8 +18,8 @@ def perturb_probs(probs, uncertainty):
 
         return lower, upper
     else:
-        return probs, probs  # Return unchanged if not enough elements to modify
-
+        return probs, probs 
+    
 def find_midpoint_overlap(interval1, interval2):
     interval1 = np.sort(interval1)
     interval2 = np.sort(interval2)

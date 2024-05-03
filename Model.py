@@ -5,26 +5,37 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
+import torch.nn.init as init
 
 DEBUG = False
 Policy = np.ndarray
 CardDistribution = np.ndarray
 
-class ModelH(nn.Module):
+class TorchModelH(nn.Module):
     def __init__(self):
         super().__init__()
 
-        self.fc1 = nn.Linear(1, 16)
-        self.relu = F.relu
-        self.fc2 = nn.Linear(16, 1)
-        self.sigmoid = nn.Sigmoid()
+        hidden_layer = 16
 
+        self.fc1 = nn.Linear(1, hidden_layer)
+        self.fc2 = nn.Linear(hidden_layer, 1)
+
+        init.kaiming_uniform_(self.fc1.weight, nonlinearity='relu')
+        init.kaiming_uniform_(self.fc2.weight, nonlinearity='relu')
+
+        self.relu = nn.ReLU()
+
+
+        # self.sigmoid = nn.Sigmoid()
+        
     def forward(self, x: torch.Tensor):
+        if x.dim() == 1:
+            x = x.unsqueeze(0)
 
         x = self.fc1(x)  # (N, 16)
         x = self.relu(x)  # (N, 16)
-        x = self.fc2(x)  # (N, 1)
-        p = self.sigmoid(x) # (N, 1)
+        x = self.fc2(x)
+        p = F.sigmoid(x)
        
         return p
 
@@ -82,10 +93,13 @@ class ConstModel:
         return (P, V)
 
     def bayes_prob(self, info_set: InfoSet) -> CardDistribution:
+        return self._bayes_prob(info_set, self.h)
+
+    def _bayes_prob(self, info_set: InfoSet, h: int) -> CardDistribution:
         cp = info_set.get_current_player().value
-        if self.h is not None:
+        if h is not None:
             if (info_set.action_history[-1] == Action.ADD_CHIP) and (info_set.cards[1-cp] == Card.QUEEN):
-                H = np.array([1 - self.h, 0, self.h])
+                H = np.array([1 - h, 0, h])
                 return (H, self.eps)
         
         H = np.ones(3)
@@ -101,6 +115,17 @@ class ConstModel:
 
         H[card.value] = 0
         return (H / sum(H), 0.0)
+
+class ModelH(ConstModel):
+    def __init__(self, p, q, h_model: TorchModelH = None, eps=0):
+        super().__init__(p, q, eps=eps)
+        self.h_model = h_model
+        self.h_model.eval()
+    
+    def bayes_prob(self, info_set: InfoSet):
+        x = torch.tensor([self.p], dtype=torch.float32)
+        h  = self.h_model(x).cpu().detach().numpy()[0, 0]
+        return self._bayes_prob(info_set, h)
     
 class Model:
     def __init__(self, p, q):
@@ -162,4 +187,13 @@ class Model:
         assert card is not None
 
         H[card.value] = 0
-        return H / sum(H)
+        return (H / sum(H), 0.0)
+    
+
+if __name__ == '__main__':
+
+    info_set = InfoSet([Action.PASS, Action.ADD_CHIP, Action.ADD_CHIP])
+    info_set.cards = [Card.QUEEN, None]
+    h_model = torch.load('temp/model-127.pt')
+    model = ModelH(0.99, 0.99, h_model=h_model, eps=0.10)
+    print(model.bayes_prob(info_set))
